@@ -1,0 +1,4 @@
+Gene,Variant,RiskFactor,HealthRisk
+BRCA1,A123T,0.85,High
+TP53,G245S,0.72,Medium
+APOE,E4,0.6,Low

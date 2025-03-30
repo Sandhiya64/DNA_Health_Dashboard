@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        .container { max-width: 600px; margin: auto; }
+        .result { margin-top: 20px; font-weight: bold; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <h2>DNA-Based Personalized Health Dashboard</h2>
+    <div class="container">
+        <input type="file" id="dnaFile">
+        <button onclick="uploadDNA()">Upload & Analyze</button>
+        <div class="result" id="result"></div>
+    </div>
+
+    <script>
+        function uploadDNA() {
+            let fileInput = document.getElementById('dnaFile');
+            let file = fileInput.files[0];
+
+            if (!file) {
+                alert("Please upload a DNA file.");
+                return;
+            }
+
+            let formData = new FormData();
+            formData.append("file", file);
+
+            fetch('/predict_dna', { method: "POST", body: formData })
+        }
+    </script>
+    <canvas id="healthChart"></canvas>
+
+<script>
+    function updateChart(data) {
+        var ctx = document.getElementById('healthChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['Gene A', 'Gene B', 'Gene C'],
+                datasets: [{
+                    label: 'Gene Expression',
+                    data: data,
+                    backgroundColor: ['red', 'blue', 'green']
+                }]
+            }
+        });
+    }
+</script>
+<script>
+    fetch('/chart_data')
+        .then(response => response.json())
+        .then(data => updateChart(data.data));
+</script>
+</body>
+</html>
