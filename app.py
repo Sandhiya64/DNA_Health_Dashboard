@@ -1,35 +1,77 @@
-from flask import Flask, session, render_template, request, redirect, url_for, flash
+from flask import Flask, session, render_template, request, redirect, url_for, flash, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
-from forms import RegisterForm, LoginForm
-from flask import jsonify
+from flask_mail import Mail, Message
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 import joblib
 import numpy as np
 import pandas as pd
-app = Flask(__name__)
-model = joblib.load("ml_model.pkl")
-print("ML Model Loaded Successfully!")
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
-app.config['SECRET_KEY'] = 'your_secret_key'
+from sklearn.preprocessing import LabelEncoder
+from app_init import app, db
+from models import User, DNAReport
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField
+from wtforms.validators import DataRequired
+from flask_wtf import FlaskForm
+from wtforms import StringField, PasswordField, SubmitField
+from wtforms.validators import DataRequired, Email, Length
 
-db = SQLAlchemy(app)
+
+
+
 bcrypt = Bcrypt(app)
+
+# Configure Flask-Mail
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = 'your_email@gmail.com'  # Replace with your email
+app.config['MAIL_PASSWORD'] = 'your_password'  # Replace with your email password
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///your_database.db'  
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'your_secret_key'
+print("Database URI:", app.config.get('SQLALCHEMY_DATABASE_URI'))
+
+# Initialize extensions
+mail = Mail(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+# Load ML model
+model = joblib.load('dna_model.pkl')
+print("ML Model Loaded Successfully!")
+ALLOWED_EXTENSIONS = {'csv'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# Initialize database and create tables
+with app.app_context():
+    db.create_all()
+class RegisterForm(FlaskForm):
+    name = StringField('Full Name', validators=[DataRequired(), Length(min=3, max=50)])
+    email = StringField('Email', validators=[DataRequired(), Email()])
+    password = PasswordField('Password', validators=[DataRequired(), Length(min=8)])
+    submit = SubmitField('Register')
+# Load user for Flask-Login
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+# Home route
 @app.route('/')
 def home():
     return "Welcome to the DNA-Based Personalized Health Dashboard!"
+
+# Dashboard route
 @app.route('/dashboard')
+@login_required
 def dashboard():
     return render_template('dashboard.html')
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(100), unique=True, nullable=False)
-    password = db.Column(db.String(100), nullable=False)
 
-# Create database tables
-with app.app_context():
-    db.create_all()
-
+# Register route
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     form = RegisterForm()
@@ -42,42 +84,62 @@ def register():
         return redirect(url_for('login'))
     return render_template('register.html', form=form)
 
+# Login route
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    form = LoginForm()
-    if form.validate_on_submit():
-        user = User.query.filter_by(email=form.email.data).first()
-        if user and bcrypt.check_password_hash(user.password, form.password.data):
-            session['user_id'] = user.id  # Store user in session
-            flash('Login successful!', 'success')
-            print("Login successful")
-            return redirect(url_for('dashboard'))
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+
+        user = User.query.filter_by(email=email).first()
+
+        if user and user.check_password(password):
+            login_user(user)  # This will set the session using Flask-Login
+            flash("Login successful!", "success")
+            next_page = request.args.get('next') 
+            print(f"User {email} logged in successfully!")  # Debug print
+            return redirect(request.args.get('next') or url_for('dashboard'))
         else:
-            flash('Invalid email or password', 'danger')
-    return render_template('login.html', form=form)
-@app.route('/api/user/<int:user_id>', methods=['GET'])
-def get_user(user_id):
-    user = User.query.get(user_id)
-    if user:
-        return jsonify({'id': user.id, 'name': user.name, 'email': user.email})
-    return jsonify({'error': 'User not found'}), 404
+            flash("Invalid username or password", "danger")
+            print(f"Failed login attempt for {email}")  # Debug print
+
+    return render_template('login.html')
+
+# Logout route
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()  # Log the user out
+    return redirect(url_for('login'))  # Redirect to login page
+
+# Predict DNA route
 @app.route('/predict', methods=['POST'])
 def predict():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part in request'}), 400
+
+    file = request.files['file']
+
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
     try:
-        # Get JSON data from the request
-        data = request.get_json()
+        df = pd.read_csv(file)
+        
+        # Optional: Validate input structure here
+        if df.empty:
+            return jsonify({'error': 'Uploaded CSV is empty'}), 400
 
-        # Extract features from JSON
-        input_features = np.array(data["features"]).reshape(1, -1)  # Convert to 2D array
+        input_features = df.values
+        predictions = model.predict(input_features)
 
-        # Make a prediction
-        prediction = model.predict(input_features)[0]
-
-        # Return the prediction as JSON
-        return jsonify({"prediction": float(prediction)})
+        # Convert predictions to list for JSON response
+        return jsonify({'predictions': predictions.tolist()})
 
     except Exception as e:
-        return jsonify({"error": str(e)})
+        return jsonify({'error': str(e)}), 500
+
+# Analyze DNA file route
 @app.route('/analyze_dna', methods=['POST'])
 def analyze_dna():
     if 'file' not in request.files:
@@ -89,7 +151,7 @@ def analyze_dna():
     print("File Content:\n", content)  # Debugging step
 
     # Move file pointer back to the beginning
-    file.seek(0)
+    file.stream.seek(0)
 
     try:
         df = pd.read_csv(file)
@@ -99,18 +161,60 @@ def analyze_dna():
 
     prediction = "High risk" if df['GeneX'].mean() > 0.5 else "Low risk"
     return jsonify({"prediction": prediction})
-model = joblib.load('dna_model.pkl')
 
+# Send email function
+def send_email(to, subject, body):
+    msg = Message(subject, sender="your_email@gmail.com", recipients=[to])
+    msg.body = body
+    mail.send(msg)
+
+# Predict DNA for authenticated users
 @app.route('/predict_dna', methods=['POST'])
+@login_required
 def predict_dna():
-    file = request.files['file']
-    df = pd.read_csv(file)
+    try:
+        if 'file' not in request.files:
+            print("No file part in request.files")  # Debug
+            return jsonify({"error": "No file uploaded"}), 400
 
-    prediction = model.predict(df)
-    return jsonify({"prediction": prediction.tolist()})
-@app.route('/chart_data', methods=['GET'])
+        file = request.files['file']
+        print("Received file:", file.filename)  # Debug
+
+        if not file.filename.endswith('.csv'):
+            print("File is not a CSV")  # Debug
+            return jsonify({"error": "Invalid file format. Please upload a CSV file."}), 400
+
+        df = pd.read_csv(file)
+        print("CSV DataFrame:\n", df.head())  # Debug
+
+        encoder = LabelEncoder()
+        df['Gene'] = encoder.fit_transform(df['Gene'])
+        df['Allele 1'] = encoder.fit_transform(df['Allele 1'])
+        df['Allele 2'] = encoder.fit_transform(df['Allele 2'])
+
+        X = df[['GeneX', 'GeneY', 'GeneZ']]
+        prediction = model.predict(X)
+
+        print("Prediction successful:", prediction.tolist())  # Debug
+        return jsonify({"prediction": prediction.tolist()})
+
+    except Exception as e:
+        print("🔥 Error in predict_dna route:", str(e))
+        return jsonify({"error": f"Internal Server Error: {str(e)}"}), 500
+@app.route('/chart_data')
+@login_required
 def chart_data():
-    return jsonify({"data": [0.8, 0.3, 0.6]})
+    reports = DNAReport.query.filter_by(user_id=current_user.id).all()
+    data = [{"date": report.timestamp.strftime("%Y-%m-%d"), "result": report.result} for report in reports]
+    return jsonify(data)
+# User reports route
+@app.route('/user_reports')
+@login_required  # This ensures the user is logged in
+def user_reports():
+    # Fetch reports only if the user is authenticated
+    reports = DNAReport.query.filter_by(user_id=current_user.id).all()
+    return render_template('user_reports.html', reports=reports)
 
 if __name__ == "__main__":
     app.run(debug=True)
+print("Model type:", type(model))

@@ -1,16 +1,24 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login</title>
 </head>
 <body>
     <h2>Login</h2>
-    <form method="POST">
-        {{ form.hidden_tag() }}
-        <p>{{ form.email.label }} {{ form.email() }}</p>
-        <p>{{ form.password.label }} {{ form.password() }}</p>
-        <p>{{ form.submit() }}</p>
+    <form method="POST">  <!-- ✅ Ensure method is POST -->
+        <p>
+            <label for="email">Email:</label>
+            <input type="email" name="email" id="email" required>  <!-- ✅ Ensure name="email" exists -->
+        </p>
+        <p>
+            <label for="password">Password:</label>
+            <input type="password" name="password" id="password" required>
+        </p>
+        <p>
+            <button type="submit">Login</button>
+        </p>
     </form>
-    <a href="{{ url_for('register') }}">Don't have an account? Register</a>
 </body>
 </html>
